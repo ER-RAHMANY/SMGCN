@@ -10,41 +10,47 @@ from models.gcn_scratch import GCN
 
 
 def train_and_test(
+    data,  # Pass the data object directly
     model_name="cheb",
-    dataset_name="Cora",
-    K=2,
     hidden_channels=16,
     epochs=200,
     lr=0.01,
     weight_decay=5e-4,
+    save_model_path="trained_model.pt",
     dropout=0.2,
-    save_model_path="trained_model.pt"
-
+    split_idx=0  # Add a parameter to select the split index
 ):
     """
-    1) Loads a Planetoid dataset (Cora, CiteSeer, PubMed).
-    2) Creates one of the GCN variants from scratch:
-       - "cheb" => ChebNetScratch with K = 2 or 3 (etc.)
-       - "first_order" => X W0 + A_norm X W1
-       - "single_param" => (I + A_norm) X W
-       - "gcn_renormalized" => A_hat_norm X W
-    3) Trains and evaluates it, then saves the model to 'save_model_path'.
+    Trains and evaluates a GCN model on the given data.
+
+    Args:
+        data: PyG Data object containing the graph.
+        model_name: Name of the model to use.
+        hidden_channels: Number of hidden channels.
+        epochs: Number of training epochs.
+        lr: Learning rate.
+        weight_decay: Weight decay for optimizer.
+        save_model_path: Path to save the trained model.
+        dropout: Dropout rate.
+        split_idx: Index of the split to use for training/validation/testing.
 
     Returns:
         model, final_test_accuracy
     """
-
-    # Load dataset
-    dataset = Planetoid(root=f"data/{dataset_name}", name=dataset_name)
-    data = dataset[0]
     x = data.x
     y = data.y
-    train_mask = data.train_mask
-    val_mask = data.val_mask
-    test_mask = data.test_mask
+    train_mask = data.train_mask[:, split_idx]  # Select the specified split
+    val_mask = data.val_mask[:, split_idx]  # Select the specified split
+    test_mask = data.test_mask[:, split_idx]  # Select the specified split
     num_nodes = x.size(0)
     in_channels = x.size(1)
-    out_channels = dataset.num_classes
+    # Infer number of classes from the dataset
+    out_channels = int(data.y.max()) + 1
+
+    # Debug prints
+    print("Number of classes:", out_channels)
+    print("Shape of y:", y.shape)
+    print("Shape of train_mask:", train_mask.shape)
 
     # Normalize adjacency once (for A_norm)
     edge_index_with_loops, deg_inv_sqrt_with_loops = normalize_edge_index(
@@ -54,7 +60,7 @@ def train_and_test(
 
     # Build the chosen model
     if model_name == "chebychev_approx":
-        model = ChebNet(in_channels, hidden_channels, out_channels, K=K)
+        model = ChebNet(in_channels, hidden_channels, out_channels, K=2)
         edge_index = edge_index_no_loops
         deg_inv_sqrt = deg_inv_sqrt_no_loops
     elif model_name == "first_order":
@@ -67,12 +73,11 @@ def train_and_test(
         deg_inv_sqrt = deg_inv_sqrt_no_loops
     elif model_name == "gcn_renormalized":
         model = GCN(in_channels, hidden_channels,
-                    out_channels,  dropout=dropout)
+                    out_channels, dropout=dropout)
         edge_index = edge_index_with_loops
         deg_inv_sqrt = deg_inv_sqrt_with_loops
     else:
-        raise ValueError(
-            f"Unknown model_name: {model_name}. choose one of:[chebychev_approx, first_order, single_param, gcn_renormalized]")
+        raise ValueError(f"Unknown model_name: {model_name}")
 
     # Move everything to CPU or GPU.
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
